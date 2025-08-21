@@ -1,0 +1,36 @@
+{
+    "name": "SpringBoot + Python + Node Dev",
+    "image": "mcr.microsoft.com/devcontainers/universal:2",
+  
+    "features": {
+      "ghcr.io/devcontainers/features/java:1": {
+        "version": "21"
+      },
+      "ghcr.io/devcontainers/features/python:1": {
+        "version": "3.11"
+      },
+      "ghcr.io/devcontainers/features/node:1": {
+        "version": "20"
+      },
+      "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+    },
+  
+    "customizations": {
+      "vscode": {
+        "extensions": [
+          "vscjava.vscode-java-pack",
+          "ms-python.python",
+          "ms-azuretools.vscode-docker",
+          "redhat.vscode-yaml",
+          "eamodio.gitlens"
+        ]
+      }
+    },
+  
+    "forwardPorts": [8080, 9092, 5432],
+  
+    "postCreateCommand": "java -version && mvn -v && python --version && node --version && docker --version",
+  
+    "remoteUser": "vscode"
+  }
+  
