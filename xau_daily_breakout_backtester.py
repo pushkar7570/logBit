@@ -1,8 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# XAUUSD Daily Breakout Backtester (M1)
-# Reproduces the MT5 EA logic in Python. See README for details.
-
+# XAUUSD Daily Breakout Backtester (M1) with Online Data Fetching
+#
+# New: automatic data download via popular libraries:
+#   - Dukascopy (minute bars 2019+ for many FX/CFD symbols, incl. XAUUSD)  -> requires `pip install dukascopy`
+#   - Yahoo Finance (intraday minute bars; limited historical depth)        -> requires `pip install yfinance`
+#
+# Fallback order when --source auto: dukascopy -> yahoo -> csv
+#
+# Example:
+#   python xau_daily_breakout_backtester.py --source auto --symbol XAUUSD --start 2019-01-01 --end 2025-09-11 --out ./reports --grid small
+#
+# If you already have CSV, you can still pass --data and set --source csv.
+#
 import argparse
 import json
 import math
@@ -11,7 +21,7 @@ import sys
 import uuid
 import time as pytime
 from dataclasses import dataclass, asdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from itertools import product
 from typing import List, Dict, Optional, Tuple
 
@@ -92,7 +102,8 @@ class Position:
     swap: float = 0.0
     trailing_active: bool = False
 
-def load_m1_csv(path: str, start: str, end: str) -> pd.DataFrame:
+# ----------------------------- Data Loaders -----------------------------
+def load_csv_m1(path: str, start: str, end: str) -> pd.DataFrame:
     df = pd.read_csv(path)
     req = ["time", "open", "high", "low", "close"]
     lower_map = {c.lower(): c for c in df.columns}
@@ -109,6 +120,117 @@ def load_m1_csv(path: str, start: str, end: str) -> pd.DataFrame:
     df.dropna(subset=["open", "high", "low", "close"], inplace=True)
     return df
 
+def fetch_dukascopy_m1(symbol: str, start: str, end: str) -> pd.DataFrame:
+    # Requires: pip install dukascopy
+    try:
+        from dukascopy import time_series as dukas_ts
+    except Exception as e:
+        raise RuntimeError("Dukascopy library not installed. pip install dukascopy") from e
+
+    start_dt = pd.to_datetime(start)
+    end_dt = pd.to_datetime(end) + pd.Timedelta(days=1) - pd.Timedelta(minutes=1)
+    df = dukas_ts.get_hist_price(symbol=symbol, interval="m1", start=start_dt, end=end_dt)
+    if df is None or df.empty:
+        raise RuntimeError("Dukascopy returned no data for given range/symbol.")
+    cols = [c.lower() for c in df.columns]
+    if all(c in cols for c in ["open","high","low","close"]):
+        out = df.copy()
+    elif all(c in cols for c in ["bidopen","bidhigh","bidlow","bidclose"]):
+        out = pd.DataFrame({
+            "open": df["bidopen"],
+            "high": df["bidhigh"],
+            "low": df["bidlow"],
+            "close": df["bidclose"],
+        }, index=df.index)
+    else:
+        rename_map = {}
+        for c in df.columns:
+            lc = c.lower()
+            if "open" in lc and "bid" not in lc and "ask" not in lc:
+                rename_map[c] = "open"
+            elif "high" in lc and "bid" not in lc and "ask" not in lc:
+                rename_map[c] = "high"
+            elif "low" in lc and "bid" not in lc and "ask" not in lc:
+                rename_map[c] = "low"
+            elif "close" in lc and "bid" not in lc and "ask" not in lc:
+                rename_map[c] = "close"
+        out = df.rename(columns=rename_map)
+        out = out[["open","high","low","close"]]
+    out.index = pd.to_datetime(out.index).tz_localize(None)
+    out = out.sort_index()
+    out = out.loc[(out.index >= pd.to_datetime(start)) & (out.index <= pd.to_datetime(end))]
+    out["volume"] = 0.0
+    return out
+
+def _yahoo_symbol(symbol: str) -> str:
+    mapping = {
+        "XAUUSD": "XAUUSD=X",
+        "EURUSD": "EURUSD=X",
+        "GBPUSD": "GBPUSD=X",
+        "USDJPY": "JPY=X",
+        "XAGUSD": "XAGUSD=X",
+        "GC": "GC=F",
+    }
+    return mapping.get(symbol.upper(), symbol)
+
+def fetch_yahoo_m1(symbol: str, start: str, end: str) -> pd.DataFrame:
+    # Requires: pip install yfinance
+    try:
+        import yfinance as yf
+    except Exception as e:
+        raise RuntimeError("yfinance not installed. pip install yfinance") from e
+
+    yf_sym = _yahoo_symbol(symbol)
+    start_dt = pd.to_datetime(start)
+    end_dt = pd.to_datetime(end)
+
+    # Yahoo minute data historically limited; we still try small chunks.
+    chunk_days = 7
+    frames = []
+    cur = start_dt
+    while cur <= end_dt:
+        chunk_end = min(cur + timedelta(days=chunk_days), end_dt)
+        df = yf.download(yf_sym, interval="1m", start=cur, end=chunk_end, progress=False, auto_adjust=False, prepost=False)
+        if df is not None and not df.empty:
+            df.index.name = "time"
+            df = df.rename(columns={"Open":"open","High":"high","Low":"low","Close":"close","Volume":"volume"})
+            frames.append(df[["open","high","low","close","volume"]])
+        cur = chunk_end + timedelta(minutes=1)
+
+    if not frames:
+        raise RuntimeError("Yahoo returned no 1m data for given range/symbol.")
+    out = pd.concat(frames).sort_index()
+    out = out[~out.index.duplicated(keep="first")]
+    out = out.loc[(out.index >= pd.to_datetime(start)) & (out.index <= pd.to_datetime(end))]
+    out.dropna(subset=["open","high","low","close"], inplace=True)
+    return out
+
+def load_data_auto(symbol: str, start: str, end: str, source: str, csv_path: Optional[str]) -> pd.DataFrame:
+    source = source.lower()
+    if source == "csv":
+        if not csv_path:
+            raise ValueError("--data must be provided when --source csv")
+        return load_csv_m1(csv_path, start, end)
+    if source == "dukascopy":
+        return fetch_dukascopy_m1(symbol, start, end)
+    if source == "yahoo":
+        return fetch_yahoo_m1(symbol, start, end)
+    if source == "auto":
+        try:
+            return fetch_dukascopy_m1(symbol, start, end)
+        except Exception as e1:
+            print(f"[auto] Dukascopy failed: {e1}", file=sys.stderr)
+            try:
+                return fetch_yahoo_m1(symbol, start, end)
+            except Exception as e2:
+                print(f"[auto] Yahoo failed: {e2}", file=sys.stderr)
+                if csv_path:
+                    print("[auto] Falling back to CSV", file=sys.stderr)
+                    return load_csv_m1(csv_path, start, end)
+                raise RuntimeError("All data sources failed (dukascopy, yahoo). Provide --data CSV as fallback.")
+    raise ValueError("--source must be one of: auto, dukascopy, yahoo, csv")
+
+# -------------------------- Strategy Engine ------------------------------
 class DailyBreakoutEngine:
     def __init__(self, m1: pd.DataFrame, cfg: BacktestConfig, params: StrategyParams):
         self.m1 = m1
@@ -455,6 +577,7 @@ class DailyBreakoutEngine:
         }
         return report
 
+# ------------------------- Parameter Grid -------------------------------
 def generate_param_grid(mode: str) -> List[StrategyParams]:
     params_list = []
     if mode == "all":
@@ -507,6 +630,7 @@ def generate_param_grid(mode: str) -> List[StrategyParams]:
         raise ValueError("grid mode must be one of: all, small")
     return params_list
 
+# -------------------------- Runner & Reports ----------------------------
 def run_one(m1: pd.DataFrame, cfg: BacktestConfig, params: StrategyParams, outdir: str, run_id: Optional[str]=None) -> str:
     run_id = run_id or str(uuid.uuid4())[:8]
     run_dir = os.path.join(outdir, f"{cfg.symbol}_{run_id}")
@@ -542,7 +666,7 @@ def run_one(m1: pd.DataFrame, cfg: BacktestConfig, params: StrategyParams, outdi
 
 def main():
     ap = argparse.ArgumentParser(description="XAUUSD Daily Breakout Backtester (M1)")
-    ap.add_argument("--data", required=True, help="Path to CSV M1 data (time,open,high,low,close,volume)")
+    ap.add_argument("--data", required=False, help="Path to CSV M1 data (time,open,high,low,close,volume)")
     ap.add_argument("--symbol", default="XAUUSD")
     ap.add_argument("--start", default="2019-01-01")
     ap.add_argument("--end", default=datetime.utcnow().strftime("%Y-%m-%d"))
@@ -552,10 +676,12 @@ def main():
     ap.add_argument("--initial-deposit", type=float, default=EQUITY_START)
     ap.add_argument("--leverage", default=DEFAULT_LEVERAGE)
     ap.add_argument("--commission-per-lot", type=float, default=0.0)
+    ap.add_argument("--source", choices=["auto","dukascopy","yahoo","csv"], default="auto",
+                    help="Data source to use. 'auto' tries dukascopy, then yahoo, then csv (if provided).")
     args = ap.parse_args()
 
     ensure_dir(args.out)
-    m1 = load_m1_csv(args.data, args.start, args.end)
+    m1 = load_data_auto(args.symbol, args.start, args.end, args.source, args.data)
 
     cfg = BacktestConfig(
         symbol=args.symbol,
