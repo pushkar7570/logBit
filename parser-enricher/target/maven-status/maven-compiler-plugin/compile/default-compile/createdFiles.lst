@@ -1,0 +1,6 @@
+com/pulse/enrich/Application.class
+com/pulse/enrich/EnrichWorker.class
+com/pulse/enrich/EnrichConfig.class
+com/pulse/enrich/EnrichController.class
+com/pulse/enrich/JacksonConfig.class
+com/pulse/enrich/HealthController.class

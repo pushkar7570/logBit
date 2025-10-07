@@ -1,0 +1,4 @@
+com/pulse/ingest/IngestController.class
+com/pulse/ingest/HealthController.class
+com/pulse/ingest/Application.class
+com/pulse/ingest/IngestConfig.class

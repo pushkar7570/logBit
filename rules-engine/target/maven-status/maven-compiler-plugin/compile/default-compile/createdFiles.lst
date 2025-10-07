@@ -1,0 +1,6 @@
+com/pulse/rules/RulesWorker.class
+com/pulse/rules/RulesConfig.class
+com/pulse/rules/JacksonConfig.class
+com/pulse/rules/RulesController.class
+com/pulse/rules/HealthController.class
+com/pulse/rules/Application.class

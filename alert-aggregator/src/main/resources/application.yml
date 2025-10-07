@@ -1,0 +1,15 @@
+policy:
+  kb:
+    url: http://localhost:8084
+ml:
+  scorer:
+    url: http://localhost:8090
+server:
+  port: 8083
+
+spring:
+  jackson:
+    mapper:
+      ACCEPT_CASE_INSENSITIVE_PROPERTIES: true
+    deserialization:
+      FAIL_ON_UNKNOWN_PROPERTIES: false

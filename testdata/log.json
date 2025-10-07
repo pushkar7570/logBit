@@ -1,0 +1,11 @@
+{
+  "id":"1",
+  "ts":"2025-09-01T10:00:00Z",
+  "source":"auth",
+  "host":"ip-1",
+  "app":"payments",
+  "severityRaw":"WARN",
+  "message":"Login failed for user root from 203.0.113.9",
+  "tags":{"env":"prod"},
+  "features": {}
+}

@@ -1,0 +1,6 @@
+spring:
+  jackson:
+    mapper:
+      ACCEPT_CASE_INSENSITIVE_PROPERTIES: true
+    deserialization:
+      FAIL_ON_UNKNOWN_PROPERTIES: false
